@@ -6,29 +6,29 @@ from datetime import datetime
 from generation_agent.user_profile import UserProfile
 from generation_agent.quiz_generator import QuizGenerator, generate_dummy_assessment_quiz
 from generation_agent.data_models import MCQQuestion, AssessmentQuiz
+from contextlib import closing
 
 # Database setup for interview results
 DB_PATH = "interview_quizzes.db"
 
 def initialize_interview_db():
     """Initialize the SQLite database for interview quiz results."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS interview_results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT NOT NULL,
-        subject TEXT NOT NULL,
-        easy_count INTEGER NOT NULL,
-        medium_count INTEGER NOT NULL,
-        hard_count INTEGER NOT NULL,
-        score REAL NOT NULL,
-        passed INTEGER NOT NULL,
-        timestamp TEXT NOT NULL
-    )
-    ''')
-    conn.commit()
-    conn.close()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS interview_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            easy_count INTEGER NOT NULL,
+            medium_count INTEGER NOT NULL,
+            hard_count INTEGER NOT NULL,
+            score REAL NOT NULL,
+            passed INTEGER NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+        ''')
+        conn.commit()
 
 # Initialize interview database
 initialize_interview_db()
@@ -85,36 +85,26 @@ def user_login_form():
             st.info("No existing learning sessions found. Create a new one!")
         else:
             user_search = st.text_input("Search by user ID", placeholder="Enter your user ID...")
-            filtered_profiles = []
-            if user_search:
-                filtered_profiles = [profile for profile in existing_profiles if user_search.lower() in profile.lower()]
-                if not filtered_profiles:
-                    st.warning(f"No user found with ID containing '{user_search}'")
-                else:
-                    st.success(f"Found {len(filtered_profiles)} matching user(s)")
-            else:
-                filtered_profiles = existing_profiles  # show all if no search term
+            filtered_profiles = [profile for profile in existing_profiles if user_search.lower() in profile.lower()] if user_search else existing_profiles
             
-            if filtered_profiles:
-                st.subheader("Select your profile:")
+            if not filtered_profiles:
+                st.warning(f"No user found with ID containing '{user_search}'")
+            else:
+                st.success(f"Found {len(filtered_profiles)} matching user(s)")
                 for profile in filtered_profiles:
                     if st.button(f"Login as {profile}", key=f"login_{profile}", use_container_width=True):
                         login_user(profile)
     
     with col2:
         st.subheader("✨ Create New Session")
-        new_user = st.text_input("Enter a user ID for your new session", 
-                                 placeholder="e.g., john_doe, student123...")
-        create_button = st.button("Create New Session", use_container_width=True)
-        if create_button:
+        new_user = st.text_input("Enter a user ID for your new session", placeholder="e.g., john_doe, student123...")
+        if st.button("Create New Session", use_container_width=True):
             if not new_user:
                 st.warning("Please enter a user ID")
+            elif new_user in find_user_profiles():
+                st.error("This user ID already exists. Please choose another one or select it from the existing sessions.")
             else:
-                if new_user in find_user_profiles():
-                    st.error("This user ID already exists. Please choose another one or select it from the existing sessions.")
-                else:
-                    # Here you might also want to add logic to create a new profile in the user_profiles.db database.
-                    login_user(new_user)
+                login_user(new_user)
 
 # ---------------------------
 # Quiz and App Functionality
@@ -132,22 +122,20 @@ if "logged_in" not in st.session_state:
 
 def save_quiz_result(user_id, subject, easy_count, medium_count, hard_count, score, passed):
     """Save quiz results to the database."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
     timestamp = datetime.now().isoformat()
-    cursor.execute(
-        "INSERT INTO interview_results (user_id, subject, easy_count, medium_count, hard_count, score, passed, timestamp) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (user_id, subject, easy_count, medium_count, hard_count, score, 1 if passed else 0, timestamp)
-    )
-    conn.commit()
-    conn.close()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO interview_results (user_id, subject, easy_count, medium_count, hard_count, score, passed, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, subject, easy_count, medium_count, hard_count, score, 1 if passed else 0, timestamp)
+        )
+        conn.commit()
 
 def get_user_quiz_history(user_id):
     """Retrieve user's quiz history."""
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM interview_results WHERE user_id = ?", conn, params=(user_id,))
-    conn.close()
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        df = pd.read_sql_query("SELECT * FROM interview_results WHERE user_id = ?", conn, params=(user_id,))
     return df
 
 def evaluate_quiz(questions, user_answers):
