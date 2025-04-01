@@ -7,20 +7,24 @@ from generation_agent.user_profile import UserProfile
 from generation_agent.quiz_generator import QuizGenerator, generate_dummy_assessment_quiz
 from generation_agent.data_models import MCQQuestion, AssessmentQuiz
 from contextlib import closing
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Database setup for interview results
 DB_CONFIG = {
-    'dbname': 'interviewdb_yvnj',
-    'user': 'vansh',
-    'password': 'uftMQnU4IdB9CSzta3cqFgNr8JmL67Jq',
-    'host': 'dpg-cvlqe2qdbo4c7386qftg-a.singapore-postgres.render.com',
-    'port': '5432'
+    'dbname': os.getenv('DB_NAME'),
+    'user': os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD'),
+    'host': os.getenv('DB_HOST'),
+    'port': os.getenv('DB_PORT')
 }
 
 def get_db_connection():
     # Full DSN approach:
     return psycopg2.connect(
-        "postgresql://vansh:uftMQnU4IdB9CSzta3cqFgNr8JmL67Jq@dpg-cvlqe2qdbo4c7386qftg-a.singapore-postgres.render.com:5432/interviewdb_yvnj"
+        f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
     )
 
 def initialize_interview_db():
