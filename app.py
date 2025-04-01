@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import psycopg2
 import pandas as pd
 import os
 from datetime import datetime
@@ -9,15 +9,27 @@ from generation_agent.data_models import MCQQuestion, AssessmentQuiz
 from contextlib import closing
 
 # Database setup for interview results
-DB_PATH = "interview_quizzes.db"
+DB_CONFIG = {
+    'dbname': 'interviewdb_yvnj',
+    'user': 'vansh',
+    'password': 'uftMQnU4IdB9CSzta3cqFgNr8JmL67Jq',
+    'host': 'dpg-cvlqe2qdbo4c7386qftg-a.singapore-postgres.render.com',
+    'port': '5432'
+}
+
+def get_db_connection():
+    # Full DSN approach:
+    return psycopg2.connect(
+        "postgresql://vansh:uftMQnU4IdB9CSzta3cqFgNr8JmL67Jq@dpg-cvlqe2qdbo4c7386qftg-a.singapore-postgres.render.com:5432/interviewdb_yvnj"
+    )
 
 def initialize_interview_db():
-    """Initialize the SQLite database for interview quiz results."""
-    with closing(sqlite3.connect(DB_PATH)) as conn:
+    """Initialize the PostgreSQL database for interview quiz results."""
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS interview_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id TEXT NOT NULL,
             subject TEXT NOT NULL,
             easy_count INTEGER NOT NULL,
@@ -25,13 +37,29 @@ def initialize_interview_db():
             hard_count INTEGER NOT NULL,
             score REAL NOT NULL,
             passed INTEGER NOT NULL,
-            timestamp TEXT NOT NULL
+            timestamp TIMESTAMP NOT NULL
+        )
+        ''')
+        conn.commit()
+
+def initialize_user_table():
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            username TEXT,
+            email TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            -- add additional fields as needed
         )
         ''')
         conn.commit()
 
 # Initialize interview database
 initialize_interview_db()
+initialize_user_table()
+
 
 # ---------------------------
 # Login Functionality Section
@@ -39,7 +67,6 @@ initialize_interview_db()
 def login_user(user_id):
     """Handle user login and initialize QuizGenerator."""
     try:
-        # Create a user profile instance (you might add more logic here)
         user_profile = UserProfile(user_id)
         st.session_state.user_id = user_id
         st.session_state.logged_in = True
@@ -50,7 +77,7 @@ def login_user(user_id):
         st.error(f"Error logging in: {str(e)}")
 
 def find_user_profiles():
-    """Search for existing user profiles from the 'user_profiles.db' database."""
+    """Search for existing user profiles from the 'user_profiles' table in PostgreSQL."""
     profiles = []
     # Check if the database exists; if not, return empty list.
     if not os.path.exists("user_profiles.db"):
@@ -58,17 +85,13 @@ def find_user_profiles():
         return profiles
     
     # Query the database for all user_ids
-    conn = sqlite3.connect("user_profiles.db")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    try:
-        cursor.execute("SELECT user_id FROM users")
-        profiles = [row['user_id'] for row in cursor.fetchall()]
-    except sqlite3.OperationalError:
-        # Table might not exist yet
-        profiles = []
-    finally:
-        conn.close()
+    with closing(get_db_connection()) as conn:
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT user_id FROM users")
+            profiles = [row[0] for row in cursor.fetchall()]
+        except psycopg2.OperationalError:
+            profiles = []
         
     return profiles
 
@@ -121,21 +144,21 @@ if "logged_in" not in st.session_state:
     st.session_state.show_feedback = False
 
 def save_quiz_result(user_id, subject, easy_count, medium_count, hard_count, score, passed):
-    """Save quiz results to the database."""
-    timestamp = datetime.now().isoformat()
-    with closing(sqlite3.connect(DB_PATH)) as conn:
+    """Save quiz results to the PostgreSQL database."""
+    timestamp = datetime.now()
+    with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO interview_results (user_id, subject, easy_count, medium_count, hard_count, score, passed, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (user_id, subject, easy_count, medium_count, hard_count, score, 1 if passed else 0, timestamp)
         )
         conn.commit()
 
 def get_user_quiz_history(user_id):
-    """Retrieve user's quiz history."""
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        df = pd.read_sql_query("SELECT * FROM interview_results WHERE user_id = ?", conn, params=(user_id,))
+    """Retrieve user's quiz history from PostgreSQL."""
+    with closing(get_db_connection()) as conn:
+        df = pd.read_sql_query("SELECT * FROM interview_results WHERE user_id = %s", conn, params=(user_id,))
     return df
 
 def evaluate_quiz(questions, user_answers):
