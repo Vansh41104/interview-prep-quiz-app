@@ -5,7 +5,6 @@ import os
 from datetime import datetime
 from generation_agent.user_profile import UserProfile
 from generation_agent.quiz_generator import QuizGenerator, generate_dummy_assessment_quiz
-from generation_agent.data_models import MCQQuestion, AssessmentQuiz
 from contextlib import closing
 from dotenv import load_dotenv
 
@@ -22,97 +21,163 @@ DB_CONFIG = {
 }
 
 def get_db_connection():
-    # Full DSN approach:
-    return psycopg2.connect(
-        f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-    )
+    try:
+        # Full DSN approach:
+        conn = psycopg2.connect(
+            f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+        )
+        return conn
+    except Exception as e:
+        st.error(f"Database connection error: {str(e)}")
+        return None
 
 def initialize_interview_db():
     """Initialize the PostgreSQL database for interview quiz results."""
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS interview_results (
-            id SERIAL PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            subject TEXT NOT NULL,
-            easy_count INTEGER NOT NULL,
-            medium_count INTEGER NOT NULL,
-            hard_count INTEGER NOT NULL,
-            score REAL NOT NULL,
-            passed INTEGER NOT NULL,
-            timestamp TIMESTAMP NOT NULL
-        )
-        ''')
-        conn.commit()
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS interview_results (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                easy_count INTEGER NOT NULL,
+                medium_count INTEGER NOT NULL,
+                hard_count INTEGER NOT NULL,
+                score REAL NOT NULL,
+                passed INTEGER NOT NULL,
+                timestamp TIMESTAMP NOT NULL
+            )
+            ''')
+            conn.commit()
 
 def initialize_user_table():
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id TEXT PRIMARY KEY,
-            username TEXT,
-            email TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            -- add additional fields as needed
-        )
-        ''')
-        conn.commit()
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                username TEXT,
+                email TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            conn.commit()
 
-# Initialize interview database
-initialize_interview_db()
-initialize_user_table()
-
+# Initialize tables when the app starts
+try:
+    initialize_interview_db()
+    initialize_user_table()
+    st.session_state.db_initialized = True
+except Exception as e:
+    st.error(f"Failed to initialize database: {str(e)}")
+    st.session_state.db_initialized = False
 
 # ---------------------------
 # Login Functionality Section
 # ---------------------------
+def search_users(search_term):
+    """Search for users matching the search term."""
+    if not search_term:
+        return []
+        
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            cursor = conn.cursor()
+            try:
+                # Use LIKE query for partial matching
+                cursor.execute(
+                    "SELECT user_id FROM users WHERE user_id ILIKE %s ORDER BY created_at DESC LIMIT 10", 
+                    (f"%{search_term}%",)
+                )
+                return [row[0] for row in cursor.fetchall()]
+            except Exception as e:
+                st.error(f"Error searching users: {str(e)}")
+    return []
+
+def create_new_user(user_id):
+    """Create a new user in the database."""
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            cursor = conn.cursor()
+            try:
+                # Check if user already exists
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+                if cursor.fetchone():
+                    return False, "User ID already exists"
+                
+                # Insert new user
+                cursor.execute(
+                    "INSERT INTO users (user_id, created_at) VALUES (%s, %s)",
+                    (user_id, datetime.now())
+                )
+                conn.commit()
+                return True, "User created successfully"
+            except Exception as e:
+                conn.rollback()
+                return False, f"Error creating user: {str(e)}"
+    return False, "Database connection failed"
+
 def login_user(user_id):
     """Handle user login and initialize QuizGenerator."""
     try:
-        user_profile = UserProfile(user_id)
-        st.session_state.user_id = user_id
-        st.session_state.logged_in = True
-        st.session_state.quiz_generator = QuizGenerator()
-        st.success(f"Login successful! Welcome, {user_id}.")
-        st.rerun()
+        conn = get_db_connection()
+        if conn:
+            with closing(conn) as conn:
+                cursor = conn.cursor()
+                # Check if user exists
+                cursor.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+                user = cursor.fetchone()
+                
+                if user:
+                    # User exists, proceed with login
+                    user_profile = UserProfile(user_id)
+                    st.session_state.user_id = user_id
+                    st.session_state.logged_in = True
+                    st.session_state.quiz_generator = QuizGenerator()
+                    return True
+                else:
+                    # User doesn't exist
+                    st.warning(f"No user found with ID: {user_id}")
+                    return False
+        else:
+            st.error("Database connection failed. Cannot log in.")
+            return False
     except Exception as e:
         st.error(f"Error logging in: {str(e)}")
-
-def find_user_profiles():
-    """Search for existing user profiles from the 'user_profiles' table in PostgreSQL."""
-    profiles = []
-    # Check if the database exists; if not, return empty list.
-    if not os.path.exists("user_profiles.db"):
-        os.makedirs("profiles", exist_ok=True)
-        return profiles
-    
-    # Query the database for all user_ids
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT user_id FROM users")
-            profiles = [row[0] for row in cursor.fetchall()]
-        except psycopg2.OperationalError:
-            profiles = []
-        
-    return profiles
+        return False
 
 def user_login_form():
     """Display a login form that lets users either select an existing profile or create a new one."""
     st.title("Interview Preparation App - Login")
+    
+    # Display database status if there's an issue
+    if not st.session_state.get('db_initialized', False):
+        st.error("Database is not properly initialized. Please check your environment variables and connection settings.")
+        if st.button("Retry Database Connection"):
+            try:
+                initialize_interview_db()
+                initialize_user_table()
+                st.session_state.db_initialized = True
+                st.success("Database connection successful!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to initialize database: {str(e)}")
+    
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("👤 Find Your Learning Session")
-        existing_profiles = find_user_profiles()
+        user_search = st.text_input("Search by user ID", placeholder="Enter your user ID...")
         
-        if not existing_profiles:
-            st.info("No existing learning sessions found. Create a new one!")
-        else:
-            user_search = st.text_input("Search by user ID", placeholder="Enter your user ID...")
-            filtered_profiles = [profile for profile in existing_profiles if user_search.lower() in profile.lower()] if user_search else existing_profiles
+        # Only search when user has entered something
+        if user_search:
+            filtered_profiles = search_users(user_search)
             
             if not filtered_profiles:
                 st.warning(f"No user found with ID containing '{user_search}'")
@@ -120,7 +185,9 @@ def user_login_form():
                 st.success(f"Found {len(filtered_profiles)} matching user(s)")
                 for profile in filtered_profiles:
                     if st.button(f"Login as {profile}", key=f"login_{profile}", use_container_width=True):
-                        login_user(profile)
+                        if login_user(profile):
+                            st.success(f"Login successful! Welcome, {profile}.")
+                            st.rerun()
     
     with col2:
         st.subheader("✨ Create New Session")
@@ -128,16 +195,23 @@ def user_login_form():
         if st.button("Create New Session", use_container_width=True):
             if not new_user:
                 st.warning("Please enter a user ID")
-            elif new_user in find_user_profiles():
-                st.error("This user ID already exists. Please choose another one or select it from the existing sessions.")
             else:
-                login_user(new_user)
+                success, message = create_new_user(new_user)
+                if success:
+                    st.success(message)
+                    if login_user(new_user):
+                        st.success(f"Login successful! Welcome, {new_user}.")
+                        st.rerun()
+                else:
+                    st.error(message)
 
 # ---------------------------
 # Quiz and App Functionality
 # ---------------------------
 # Streamlit app configuration
 st.set_page_config(page_title="Interview Preparation App", layout="wide")
+
+# Initialize session state variables
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_id = None
@@ -146,24 +220,39 @@ if "logged_in" not in st.session_state:
     st.session_state.quiz_submitted = False
     st.session_state.quiz_results = None
     st.session_state.show_feedback = False
+    st.session_state.db_initialized = False
 
 def save_quiz_result(user_id, subject, easy_count, medium_count, hard_count, score, passed):
     """Save quiz results to the PostgreSQL database."""
     timestamp = datetime.now()
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO interview_results (user_id, subject, easy_count, medium_count, hard_count, score, passed, timestamp) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            (user_id, subject, easy_count, medium_count, hard_count, score, 1 if passed else 0, timestamp)
-        )
-        conn.commit()
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO interview_results (user_id, subject, easy_count, medium_count, hard_count, score, passed, timestamp) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (user_id, subject, easy_count, medium_count, hard_count, score, 1 if passed else 0, timestamp)
+            )
+            conn.commit()
+            return True
+    return False
 
 def get_user_quiz_history(user_id):
     """Retrieve user's quiz history from PostgreSQL."""
-    with closing(get_db_connection()) as conn:
-        df = pd.read_sql_query("SELECT * FROM interview_results WHERE user_id = %s", conn, params=(user_id,))
-    return df
+    conn = get_db_connection()
+    if conn:
+        with closing(conn) as conn:
+            try:
+                df = pd.read_sql_query(
+                    "SELECT * FROM interview_results WHERE user_id = %s ORDER BY timestamp DESC", 
+                    conn, 
+                    params=(user_id,)
+                )
+                return df
+            except Exception as e:
+                st.error(f"Error fetching quiz history: {str(e)}")
+    return pd.DataFrame()  # Return empty DataFrame on error
 
 def evaluate_quiz(questions, user_answers):
     """Evaluate the quiz and return results."""
@@ -208,7 +297,8 @@ def display_quiz():
         easy_count = sum(1 for q in st.session_state.current_questions if q["difficulty"] == "easy")
         medium_count = sum(1 for q in st.session_state.current_questions if q["difficulty"] == "medium")
         hard_count = sum(1 for q in st.session_state.current_questions if q["difficulty"] == "hard")
-        save_quiz_result(
+        
+        if save_quiz_result(
             st.session_state.user_id,
             st.session_state.quiz_subject,
             easy_count,
@@ -216,8 +306,10 @@ def display_quiz():
             hard_count,
             results["score"],
             results["passed"]
-        )
-        st.success("Quiz submitted successfully!")
+        ):
+            st.success("Quiz submitted successfully!")
+        else:
+            st.error("Failed to save quiz results")
         st.rerun()
 
     if st.session_state.quiz_submitted and st.session_state.quiz_results:
@@ -248,31 +340,59 @@ def take_quiz():
 
     if st.button("Generate Quiz"):
         with st.spinner("Generating questions..."):
-            if 'quiz_generator' in st.session_state:
-                questions = st.session_state.quiz_generator.generate_assessment_quiz(subject, num_easy, num_medium, num_hard)
-                if not st.session_state.quiz_generator.use_llm:
+            try:
+                if 'quiz_generator' in st.session_state:
+                    questions = st.session_state.quiz_generator.generate_assessment_quiz(subject, num_easy, num_medium, num_hard)
+                    if not st.session_state.quiz_generator.use_llm:
+                        st.warning("Using dummy questions as AI generation is unavailable.")
+                else:
+                    questions = generate_dummy_assessment_quiz(subject, num_easy, num_medium, num_hard)
                     st.warning("Using dummy questions as AI generation is unavailable.")
-            else:
-                questions = generate_dummy_assessment_quiz(subject, num_easy, num_medium, num_hard)
-                st.warning("Using dummy questions as AI generation is unavailable.")
-            if questions:
-                st.session_state.current_questions = questions
-                st.session_state.user_answers = [-1] * len(questions)
-                st.session_state.quiz_submitted = False
-                st.session_state.quiz_results = None
-                st.session_state.show_feedback = False
-                st.session_state.quiz_subject = subject
-                st.success(f"Generated {len(questions)} questions!")
-                st.rerun()
-            else:
-                st.error("Failed to generate questions. Please try again.")
+                
+                if questions:
+                    st.session_state.current_questions = questions
+                    st.session_state.user_answers = [-1] * len(questions)
+                    st.session_state.quiz_submitted = False
+                    st.session_state.quiz_results = None
+                    st.session_state.show_feedback = False
+                    st.session_state.quiz_subject = subject
+                    st.success(f"Generated {len(questions)} questions!")
+                    st.rerun()
+                else:
+                    st.error("Failed to generate questions. Please try again.")
+            except Exception as e:
+                st.error(f"Error generating quiz: {str(e)}")
 
 def view_history():
     """Display the user's quiz history."""
     st.subheader("Quiz History")
     history = get_user_quiz_history(st.session_state.user_id)
     if not history.empty:
-        st.dataframe(history[["subject", "score", "passed", "timestamp", "easy_count", "medium_count", "hard_count"]])
+        # Format the timestamp column for better readability
+        if 'timestamp' in history.columns:
+            history['timestamp'] = pd.to_datetime(history['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # Format other columns
+        if 'score' in history.columns:
+            history['score'] = history['score'].round(2)
+        
+        if 'passed' in history.columns:
+            history['passed'] = history['passed'].map({1: 'Yes', 0: 'No'})
+        
+        # Display the dataframe
+        st.dataframe(
+            history[["subject", "score", "passed", "timestamp", "easy_count", "medium_count", "hard_count"]],
+            use_container_width=True
+        )
+        
+        # Add a download button for the history
+        csv = history.to_csv(index=False)
+        st.download_button(
+            label="Download History as CSV",
+            data=csv,
+            file_name=f"{st.session_state.user_id}_quiz_history.csv",
+            mime="text/csv"
+        )
     else:
         st.info("No quiz history available yet.")
 
@@ -281,7 +401,7 @@ def view_history():
 # ---------------------------
 def main():
     if not st.session_state.logged_in:
-        # Instead of the original text input for user_id, call the integrated login form.
+        # Call the integrated login form
         user_login_form()
     else:
         st.title(f"Welcome, {st.session_state.user_id}!")
