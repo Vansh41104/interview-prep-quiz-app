@@ -19,16 +19,34 @@ assessment_quiz_template = """
 As an AI assessment expert, create a comprehensive quiz for {subject}.
 
 SPECIFIC INSTRUCTIONS:
-1. Generate {num_easy} easy, {num_medium} medium, and {num_hard} hard multiple-choice questions
-2. Create scenario-based questions that test application, not memorization
-3. Ensure questions reflect current industry practices and tools for {subject}
-4. For each question:
-   - Provide exactly 4 options with only one correct answer
-   - Write plausible distractors that represent common misconceptions
-   - Include a detailed explanation for why the correct answer is right and others are wrong
-   - Mark the difficulty level as "easy", "medium", or "hard"
+1. Generate {num_easy} easy, {num_medium} medium, and {num_hard} hard multiple-choice questions with these criteria:
+   - EASY: Tests fundamental concepts, basic definitions, or simple applications
+   - MEDIUM: Requires deeper understanding, application of concepts to scenarios
+   - HARD: Demands advanced problem-solving, integration of multiple concepts, or edge case handling
 
-Remember: Questions should test practical knowledge professionals need, not theoretical concepts.
+2. Create practical, scenario-based questions that:
+   - Test real-world application rather than simple recall
+   - Present realistic situations professionals encounter with {subject}
+   - Challenge analytical thinking and decision-making
+   - Avoid trivial or purely theoretical knowledge
+
+3. For each question:
+   - Phrase questions clearly and precisely, ending with a question mark
+   - Include exactly 4 options, with only one definitively correct answer
+   - Make distractors plausible by using common misconceptions or partial understandings
+   - Ensure distractors and correct answers are similar in length and structure
+   - Write a detailed explanation (3-5 sentences) that: 
+     * Explains why the correct answer is right
+     * Clarifies why each distractor is wrong
+     * References relevant principles or best practices
+
+4. Ensure content reflects current industry standards and tools for {subject} as of 2025
+
+5. Avoid:
+   - Ambiguous wording or trick questions
+   - Outdated information or deprecated practices
+   - Questions that can be answered correctly without domain knowledge
+   - Regional or cultural biases in examples or scenarios
 
 {format_instructions}
 """
